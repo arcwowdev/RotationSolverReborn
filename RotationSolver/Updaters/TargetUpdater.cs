@@ -18,6 +18,115 @@ internal static partial class TargetUpdater
 
     internal static void UpdateTargets()
     {
+        DataCenter.TargetsByRange.Clear();
+        DataCenter.AllTargets = GetAllTargets();
+        if (DataCenter.AllTargets?.Count > 0)
+        {
+            UpdateLists();
+            DataCenter.DeathTarget = GetDeathTarget();
+            DataCenter.DispelTarget = GetDispelTarget();
+            DataCenter.ProvokeTarget = (DataCenter.Role == JobRole.Tank || Player.Object.HasStatus(true, StatusID.VariantUltimatumSet)) ? GetFirstHostileTarget(ObjectHelper.CanProvoke) : null; // Calculating this per frame rather than on-demand is actually a fair amount worse
+            DataCenter.InterruptTarget = GetFirstHostileTarget(ObjectHelper.CanInterrupt); // Tanks, Melee, RDM, and various phantom and duty actions can interrupt so just deal with it
+        }
+        UpdateTimeToKill();
+    }
+
+    private static unsafe void UpdateLists()
+    {
+        if (DataCenter.AllTargets != null)
+        {
+            List<IBattleChara> partyMembers = [];
+            List<IBattleChara> allianceMembers = [];
+            List<IBattleChara> hostileTargets = [];
+            RaiseType raisetype = Service.Config.RaiseType;
+
+            foreach (IBattleChara member in DataCenter.AllTargets)
+            {
+                try
+                {
+                    if (member.IsEnemy())
+                    {
+                        if (member.IsTargetable && member.DistanceToPlayer() < 48 && member.CanSee())
+                        {
+                            // Valid hostile target
+                            bool hasInvincible = false;
+                            var statusList = member.StatusList;
+                            if (statusList != null)
+                            {
+                                var statusCount = statusList.Length;
+                                for (int i = 0; i < statusCount; i++)
+                                {
+                                    var status = statusList[i];
+                                    if (status != null && status.StatusId != 0 && status.IsInvincible())
+                                    {
+                                        hasInvincible = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (hasInvincible && ((DataCenter.IsPvP && !Service.Config.IgnorePvPInvincibility) || !DataCenter.IsPvP))
+                            {
+                                continue; // Invincible enemy doesn't get added to any lists
+                            }
+                            hostileTargets.Add(member);
+                        }
+                    }
+                    else if (member.IsPet())
+                    {
+                        continue; // We never target these
+                    }
+                    else if (member.IsParty())
+                    {
+                        FFXIVClientStructs.FFXIV.Client.Game.Character.Character* character = member.Character();
+                        if (character != null)
+                        {
+                            partyMembers.Add(member);
+                            continue; // Party members are only added to the party list
+                        }
+                    }
+                    else // Not a party member or hostile, so check alliance status
+                    {
+                        // Alliance members are based on the raise settings
+                        if (raisetype == RaiseType.PartyOnly)
+                        {
+                            // No alliance member checks
+                        }
+                        else if (raisetype == RaiseType.AllOutOfDuty)
+                        {
+                            if (member.IsOtherPlayerOutOfDuty() && !partyMembers.Contains(member)) // We'd have added them above if they were party
+                            {
+                                FFXIVClientStructs.FFXIV.Client.Game.Character.Character* character = member.Character();
+                                if (character != null)
+                                {
+                                    allianceMembers.Add(member);
+                                    continue;
+                                }
+                            }
+                        }
+                        else if (member.IsAllianceMember() && !partyMembers.Contains(member))
+                        {
+                            FFXIVClientStructs.FFXIV.Client.Game.Character.Character* character = member.Character();
+                            if (character != null)
+                            {
+                                allianceMembers.Add(member);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    PluginLog.Error($"Error in Updating Member Lists: {ex.Message}");
+                }
+            }
+
+            DataCenter.PartyMembers = partyMembers;
+            DataCenter.AllianceMembers = allianceMembers;
+            DataCenter.AllHostileTargets = hostileTargets;
+        }
+    }
+
+    internal static void OldUpdateTargets()
+    {
         //PluginLog.Debug("Updating targets");
         DataCenter.TargetsByRange.Clear();
         DataCenter.AllTargets = GetAllTargets();
