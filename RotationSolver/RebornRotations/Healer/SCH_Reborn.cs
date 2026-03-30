@@ -90,7 +90,7 @@ public sealed class SCH_Reborn : ScholarRotation
     public DeploymentTacticsUsageStrategy DeploymentTacticsUsage { get; set; } = DeploymentTacticsUsageStrategy.CatalyzeOnly;
 
     [RotationConfig(CombatType.PvE, Name = "Try to use Recitation -> Adloquium -> Deployment Tactics")]
-    public bool TrySpreadloquium { get; set; } = true;
+    public bool TrySpreadloquium { get; set; } = false;
 
     public enum DeploymentTacticsUsageStrategy : byte
     {
