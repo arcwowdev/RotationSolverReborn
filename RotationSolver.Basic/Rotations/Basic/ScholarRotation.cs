@@ -55,6 +55,28 @@ public partial class ScholarRotation
     /// Has Recitation.
     /// </summary>
     public static bool HasRecitation => StatusHelper.PlayerHasStatus(true, StatusID.Recitation);
+
+    /// <summary>
+    /// The distance from <paramref name="battleChara"/> to the player's pet
+    /// </summary>
+    /// <param name="battleChara"></param>
+    /// <returns></returns>
+    public static float DistanceToPet(IBattleChara battleChara)
+    {
+        if (battleChara == null)
+        {
+            return float.MaxValue;
+        }
+        var pet = DataCenter.GetPet();
+        if (pet == null)
+        {
+            return float.MaxValue;
+        }
+
+        // Eos casts from the center of her hitbox so it's only from her center to the target's hitbox
+        return Vector3.Distance(pet.Position, battleChara.Position) - (battleChara.HitboxRadius);
+    }
+
     #endregion
 
     #region Actions Unassignable

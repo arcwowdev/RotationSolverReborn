@@ -794,6 +794,15 @@ internal static class DataCenter
 		CharacterManager* characterManager = CharacterManager.Instance();
 		return characterManager == null ? (BattleChara*)null : characterManager->LookupBuddyByOwnerObject(playerBattleChara);
 	}
+
+	/// <summary>
+	/// Gets the players pet
+	/// </summary>
+	/// <returns>IBattleChara? pet</returns>
+	public static IBattleChara? GetPet()
+	{
+		return Svc.Buddies.PetBuddy?.GameObject as IBattleChara;
+	}
 	#endregion
 
 	#region HP

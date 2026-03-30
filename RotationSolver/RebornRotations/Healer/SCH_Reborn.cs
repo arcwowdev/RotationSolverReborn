@@ -89,6 +89,9 @@ public sealed class SCH_Reborn : ScholarRotation
     [RotationConfig(CombatType.PvE, Name = "How to use Deployment Tactics")]
     public DeploymentTacticsUsageStrategy DeploymentTacticsUsage { get; set; } = DeploymentTacticsUsageStrategy.CatalyzeOnly;
 
+    [RotationConfig(CombatType.PvE, Name = "Try to use Recitation -> Adloquium -> Deployment Tactics")]
+    public bool TrySpreadloquium { get; set; } = true;
+
     public enum DeploymentTacticsUsageStrategy : byte
     {
         [Description("Use when a party member has Catalyze status")]
@@ -100,6 +103,9 @@ public sealed class SCH_Reborn : ScholarRotation
     #endregion
 
     #region Tracking Properties
+    private int _whisperingDawnCount = -1;
+    private int _feyBlessingCount = -1;
+
     public override void DisplayRotationStatus()
     {
         ImGui.Text($"Max Targets to apply Bio to rather than spamming AoW: {GetAoWBreakevenTargets() - 1}");
@@ -146,6 +152,8 @@ public sealed class SCH_Reborn : ScholarRotation
     #region oGCD Logic
     protected override bool EmergencyAbility(IAction nextGCD, out IAction? act)
     {
+        ResetFairyRangeCheck();
+
         // Verified Excog and Indomitability are NOT recognized by "next GCD"
         if (ShouldUseRecitation(nextGCD) && RecitationPvE.CanUse(out act))
         {
@@ -176,23 +184,22 @@ public sealed class SCH_Reborn : ScholarRotation
             }
         }
 
-        // Remove Aetherpact
-        foreach (IBattleChara item in PartyMembers)
+        // Burn Consolation if about to run out of time on Seraph and still have charges
+        if (SeraphTime < 3 && ConsolationPvE.CanUse(out act, usedUp: true))
         {
-            if (!item.HasStatus(true, StatusID.FeyUnion_1223))
-            {
-                continue;
-            }
+            return true;
+        }
 
-            if (item.GetHealthRatio() >= AetherpactRemove)
+        // Use recitation to excog a tank if it will otherwise fall off wasted
+        if (StatusHelper.PlayerWillStatusEndGCD(1, 0, true, StatusID.Recitation))
+        {
+            if (ExcogitationPvE.CanUse(out act, targetOverride: TargetType.Tank))
             {
-                act = AetherpactPvE;
                 return true;
             }
         }
-
-        // Burn Consolation if about to run out of time on Seraph and still have charges
-        return SeraphTime < 3 && ConsolationPvE.CanUse(out act, usedUp: true) || base.EmergencyAbility(nextGCD, out act);
+            
+        return base.EmergencyAbility(nextGCD, out act);
     }
 
     [RotationDesc(ActionID.SummonSeraphPvE, ActionID.ConsolationPvE, ActionID.SacredSoilPvE, ActionID.IndomitabilityPvE, ActionID.WhisperingDawnPvE, ActionID.FeyBlessingPvE, ActionID.SeraphismPvE)]
@@ -224,13 +231,15 @@ public sealed class SCH_Reborn : ScholarRotation
             }
         }
 
+        GetFairyRanges();
+
         // Otherwise we use fairy abilities as these are cheaper/better than our aether charges
-        if (WhisperingDawnPvE.CanUse(out act))
+        if (_whisperingDawnCount > 1 && WhisperingDawnPvE.CanUse(out act))
         {
             return true;
         }
 
-        if (FeyBlessingPvE.CanUse(out act))
+        if (_feyBlessingCount > 1 && FeyBlessingPvE.CanUse(out act))
         {
             return true;
         }
@@ -332,18 +341,19 @@ public sealed class SCH_Reborn : ScholarRotation
             return true;
         }
 
-        if (LustratePvE.CanUse(out act))
-        {
-            return true; // Technically Whispering Dawn is better to burn first, but the 15y range from the faerie makes this unreliable in dungeons
-        }
-
         // Use aoe faerie abilities even for single target to avoid GCD heals
-        if (WhisperingDawnPvE.CanUse(out act))
+        GetFairyRanges();
+        if (_whisperingDawnCount > 0 && WhisperingDawnPvE.CanUse(out act))
         {
             return true;
         }
 
-        if (FeyBlessingPvE.CanUse(out act))
+        if (LustratePvE.CanUse(out act))
+        {
+            return true; // Lustrate does beat out Fey Blessing as a single target heal still
+        }
+
+        if (_feyBlessingCount > 0 && FeyBlessingPvE.CanUse(out act))
         {
             return true;
         }
@@ -523,6 +533,21 @@ public sealed class SCH_Reborn : ScholarRotation
             return true;
         }
 
+        // Remove Aetherpact all the way down in attack ability because it's really low priority unless it's a dark knight entering living dead
+        foreach (IBattleChara item in PartyMembers)
+        {
+            if (!item.HasStatus(true, StatusID.FeyUnion_1223))
+            {
+                continue;
+            }
+
+            if (item.GetHealthRatio() >= AetherpactRemove)
+            {
+                act = AetherpactPvE;
+                return true;
+            }
+        }
+
         return base.AttackAbility(nextGCD, out act);
     }
     #endregion
@@ -587,12 +612,20 @@ public sealed class SCH_Reborn : ScholarRotation
         return base.HealSingleGCD(out act);
     }
 
-    [RotationDesc(ActionID.SuccorPvE, ActionID.ConcitationPvE, ActionID.AccessionPvE)]
+    [RotationDesc(ActionID.SuccorPvE, ActionID.ConcitationPvE, ActionID.AccessionPvE, ActionID.AdloquiumPvE)]
     protected override bool DefenseAreaGCD(out IAction? act)
     {
         if ((HasSwift || IsLastAction(ActionID.SwiftcastPvE)) && SwiftLogic && MergedStatus.HasFlag(AutoStatus.Raise))
         {
             return base.DefenseAreaGCD(out act);
+        }
+
+        if (TrySpreadloquium && !DeploymentTacticsPvE.Cooldown.IsCoolingDown) // We've said we want to try using Recitation -> Adloquium -> Deployment Tactics
+        {
+            if (AdloquiumPvE.CanUse(out act, targetOverride: TargetType.Tank))
+            {
+                return true;
+            }
         }
 
         // Only have all 3 checks in case players have added their own custom configurations.
@@ -612,6 +645,18 @@ public sealed class SCH_Reborn : ScholarRotation
         }
 
         return base.DefenseAreaGCD(out act);
+    }
+
+    // This predominantly comes up in low level content where we don't have access to good oGCD defensive options
+    [RotationDesc(ActionID.AdloquiumPvE)]
+    protected override bool DefenseSingleGCD(out IAction? act)
+    {
+        if (AdloquiumPvE.CanUse(out act)) // i.e. does target have a shield already
+        {
+            return true;
+        }
+
+        return base.DefenseSingleGCD(out act);
     }
 
 	[RotationDesc(ActionID.ResurrectionPvE)]
@@ -637,6 +682,9 @@ public sealed class SCH_Reborn : ScholarRotation
         {
             return true;
         }
+
+        // Make sure we spend recitation on an adlo if we have it still available and are hard casting
+        if (HasRecitation && AdloquiumPvE.CanUse(out act)) return true;
 
         // Don't use attacks if we're in a wipe scenario spamming rezzes and heals
         if (CurrentMp < EmergencyHealingMPThreshold)
@@ -885,6 +933,44 @@ public sealed class SCH_Reborn : ScholarRotation
             targets = 5 - DotOffsetMobs; // Broil3 is available
         }
         return targets;
+    }
+
+    private void GetFairyRanges()
+    {
+        if (_whisperingDawnCount >= 0)
+        {
+            return;
+        }
+
+        // Otherwise we need to calc who is in range for whispering dawn and fey blessing
+        // whispering dawn range is 15y, fey blessing range is 20y
+        foreach (var member in PartyMembers)
+        {
+            if (member?.IsDead != false) // dead people don't get healed
+            {
+                continue;
+            }
+            if (member.GetHealthRatio() == 1f) // We don't need to heal these people
+            {
+                continue;
+            }
+            var range = DistanceToPet(member);
+            if (range <= 15f)
+            {
+                _whisperingDawnCount++;
+                _feyBlessingCount++;
+            }
+            else if (range <= 20f)
+            {
+                _feyBlessingCount++;
+            }
+        }
+    }
+
+    private void ResetFairyRangeCheck()
+    {
+        _whisperingDawnCount = -1;
+        _feyBlessingCount = -1;
     }
 
     public override bool CanHealSingleSpell
